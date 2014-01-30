@@ -17,15 +17,19 @@ if(INTERROGATE_VERBOSE)
   list(APPEND IGATE_FLAGS "-v")
 endif()
 
-if(INTERROGATE_PYTHON_INTERFACE AND PYTHON_NATIVE)
-  list(APPEND IGATE_FLAGS -python-native)
-endif()
-
 set(IMOD_FLAGS ${INTERROGATE_MODULE_OPTIONS})
 
-# This is a list of filename extensions that Interrogate will allow in the
-# sources lists.
-set(INTERROGATE_EXTENSIONS "cxx;h")
+if(INTERROGATE_PYTHON_INTERFACE AND PYTHON_NATIVE)
+  list(APPEND IGATE_FLAGS -python-native)
+  list(APPEND IMOD_FLAGS -python-native)
+endif()
+
+# This is a list of regexes that are applied to every filename. If one of the
+# regexes matches, that file will not be passed to Interrogate.
+set(INTERROGATE_EXCLUDE_REGEXES
+  ".*\\.I$"
+  ".*\\.N$"
+  ".*_src\\..*")
 
 #
 # Function: target_interrogate(target [ALL] [source1 [source2 ...]])
@@ -60,17 +64,13 @@ function(target_interrogate target)
 
     list(REMOVE_DUPLICATES sources)
 
-    # Also remove the non-whitelisted filename extensions from sources:
+    # Also remove the regex-blacklisted filenames from sources:
     foreach(source ${sources})
-      set(any_extension_matches OFF)
-      foreach(filex ${INTERROGATE_EXTENSIONS})
-        if("${source}" MATCHES ".*\\.${filex}$")
-          set(any_extension_matches ON)
+      foreach(regex ${INTERROGATE_EXCLUDE_REGEXES})
+        if("${source}" MATCHES "${regex}")
+          list(REMOVE_ITEM sources "${source}")
         endif()
-      endforeach(filex)
-      if(NOT any_extension_matches)
-        list(REMOVE_ITEM sources "${source}")
-      endif()
+      endforeach(regex)
     endforeach(source)
 
     # Go through the sources to determine the full name,
@@ -100,17 +100,19 @@ function(target_interrogate target)
         ${igate_includes} -I "${include_directory}")
     endforeach(include_directory)
 
+    set(igate_database "${CMAKE_CURRENT_BINARY_DIR}/${target}.in")
     add_custom_command(
-      OUTPUT "${target}_igate.cxx" "${target}.in"
+      OUTPUT "${target}_igate.cxx" "${igate_database}"
       COMMAND interrogate
-        -od "${target}.in"
+        -od "${igate_database}"
         -oc "${target}_igate.cxx"
+        -module $<TARGET_PROPERTY:${target},INTERROGATE_MODULE>
         -library ${target} ${IGATE_FLAGS}
         -srcdir "${CMAKE_CURRENT_SOURCE_DIR}"
         -S "${PROJECT_SOURCE_DIR}/dtool/src/parser-inc"
         -S "${PROJECT_BINARY_DIR}/include/parser-inc"
         -S "${PROJECT_BINARY_DIR}/include"
-        ${igate_includes}
+        -I '$<TARGET_PROPERTY:${target},INCLUDE_DIRECTORIES>'
         ${sources}
       DEPENDS interrogate ${deps}
       COMMENT "Interrogating ${target}"
@@ -128,13 +130,16 @@ function(target_interrogate target)
 
     # Now record INTERROGATE_SOURCES and INTERROGATE_DATABASE to the target:
     set_target_properties("${target}" PROPERTIES INTERROGATE_SOURCES ${igate_sources})
-    set_target_properties("${target}" PROPERTIES INTERROGATE_DATABASE "${target}.in")
-
+    set_target_properties("${target}" PROPERTIES INTERROGATE_DATABASE "${igate_database}")
+    # This gets set by add_python_module later on:
+    set_target_properties("${target}" PROPERTIES INTERROGATE_MODULE "NONE")
 
     # HACK: This is REALLY ugly, but we can't add the _igate.cxx to the existing
     # target (or at least, when I tried, it ignored the additional file), so as
     # a (very!) temporary workaround, add another library and link it in.
     add_library("${target}_igate" ${igate_sources})
+    get_target_property(target_libraries "${target}" INTERFACE_LINK_LIBRARIES)
+    target_link_libraries("${target}_igate" ${target_libraries})
     target_link_libraries(${target} ${target}_igate)
 
   endif()
@@ -147,10 +152,17 @@ endfunction(target_interrogate)
 function(add_python_module module)
   if(HAVE_PYTHON AND HAVE_INTERROGATE)
     set(targets ${ARGN})
-    set(infiles)
+    set(databases)
 
     foreach(target ${targets})
-      list(APPEND infiles "${target}.in")
+      # Add the target's .in (database) to what we're going to pass to
+      # interrogate_module...
+      get_target_property(target_database "${target}" INTERROGATE_DATABASE)
+      list(APPEND databases "${target_database}")
+
+      # Also set the target's INTERROGATE_MODULE property so that the target's
+      # interrogate is invoked with our name as the module:
+      set_target_properties("${target}" PROPERTIES INTERROGATE_MODULE "${module}")
     endforeach(target)
 
     add_custom_command(
@@ -158,13 +170,19 @@ function(add_python_module module)
       COMMAND interrogate_module
         -oc "${CMAKE_CURRENT_BINARY_DIR}/${module}_module.cxx"
         -module ${module} -library ${module}
-        ${IMOD_FLAGS} ${infiles}
-      DEPENDS interrogate_module ${infiles}
+        ${IMOD_FLAGS} ${databases}
+      DEPENDS interrogate_module ${databases}
     )
 
     add_library(${module} MODULE "${module}_module.cxx")
     target_link_libraries(${module} ${PYTHON_LIBRARIES})
     target_link_libraries(${module} p3interrogatedb)
+    foreach(target ${targets})
+      target_link_libraries(${module} ${target})
+
+      # This is part of the aforementioned HACK:
+      target_link_libraries(${module} ${target}_igate)
+    endforeach(target)
 
     set_target_properties(${module} PROPERTIES
       LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/panda3d"

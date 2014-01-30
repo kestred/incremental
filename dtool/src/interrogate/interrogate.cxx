@@ -50,6 +50,9 @@ CPPVisibility min_vis = V_published;
 string library_name;
 string module_name;
 
+// Separators for -S and -I:
+static const char *dir_path_sep = ";:,";
+
 // Short command-line options.
 static const char *short_options = "I:S:D:F:vh";
 
@@ -324,18 +327,22 @@ main(int argc, char **argv) {
   while (flag != EOF) {
     switch (flag) {
     case 'I':
-      fn = Filename::from_os_specific(optarg);
-      fn.make_absolute();
-      parser._quote_include_path.append_directory(fn);
-      parser._quote_include_kind.push_back(CPPFile::S_alternate);
+      for(char *os_fn = strtok(optarg, dir_path_sep); os_fn; os_fn = strtok(NULL, dir_path_sep)) {
+        fn = Filename::from_os_specific(os_fn);
+        fn.make_absolute();
+        parser._quote_include_path.append_directory(fn);
+        parser._quote_include_kind.push_back(CPPFile::S_alternate);
+      }
       break;
 
     case 'S':
-      fn = Filename::from_os_specific(optarg);
-      fn.make_absolute();
-      parser._angle_include_path.append_directory(fn);
-      parser._quote_include_path.append_directory(fn);
-      parser._quote_include_kind.push_back(CPPFile::S_system);
+      for(char *os_fn = strtok(optarg, dir_path_sep); os_fn; os_fn = strtok(NULL, dir_path_sep)) {
+        fn = Filename::from_os_specific(os_fn);
+        fn.make_absolute();
+        parser._angle_include_path.append_directory(fn);
+        parser._quote_include_path.append_directory(fn);
+        parser._quote_include_kind.push_back(CPPFile::S_system);
+      }
       break;
 
     case 'D':
