@@ -132,6 +132,20 @@ typedef ios::seekdir ios_seekdir;
 #define CONSTEXPR INLINE
 #endif
 
+#if (defined(WIN32_VC) || defined(WIN64_VC)) && !defined(CPPPARSER) && !defined(LINK_ALL_STATIC)
+// Win32 requires explicit indication for imported and exported symbols. These
+// macros are defined as appropriate, but only on Windows (and when necessary).
+#define EXPORT_CLASS __declspec(dllexport)
+#define EXPORT_TEMPLATE
+#define IMPORT_CLASS __declspec(dllimport)
+#define IMPORT_TEMPLATE extern
+#else
+#define EXPORT_CLASS
+#define EXPORT_TEMPLATE
+#define IMPORT_CLASS
+#define IMPORT_TEMPLATE
+#endif
+
 #if defined(WIN32_VC) && !defined(LINK_ALL_STATIC) && defined(EXPORT_TEMPLATES)
 // This macro must be used to export an instantiated template class
 // from a DLL.  If the template class name itself contains commas, it
